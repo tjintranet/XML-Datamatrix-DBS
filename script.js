@@ -15,13 +15,6 @@ document.addEventListener('DOMContentLoaded', function() {
     const processingIndicator = document.getElementById('processingIndicator');
     const adjustmentSummary = document.getElementById('adjustmentSummary');
     
-    // Debug: Check if elements exist
-    console.log('DOM elements found:', {
-        excelFile: !!excelFile,
-        downloadAllBtn: !!downloadAllBtn,
-        clearAllBtn: !!clearAllBtn
-    });
-    
     // Data storage
     let xmlDataArray = [];
     let barcodeDataArray = [];
@@ -161,111 +154,132 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    async function downloadAllFiles() {
-        console.log('Download function called');
-        showProcessingIndicator('Generating XML files and DataMatrix PDFs...');
+    function createXmlFromRow(headers, values) {
+        const xmlDoc = document.implementation.createDocument(null, "csv", null);
+        const root = xmlDoc.documentElement;
         
-        try {
-            const zip = new JSZip();
-            const { jsPDF } = window.jspdf;
-            
-            // Add all XML files to ZIP
-            xmlDataArray.forEach(data => {
-                zip.file(`${data.wiNumber}.xml`, data.xml);
-            });
-            
-            // Add all DataMatrix PDFs to ZIP
-            for (let i = 0; i < barcodeDataArray.length; i++) {
-                const barcodeData = barcodeDataArray[i];
+        const pi = xmlDoc.createProcessingInstruction('xml', 'version="1.0" encoding="UTF-8"');
+        xmlDoc.insertBefore(pi, root);
+        
+        for (let i = 0; i < headers.length; i++) {
+            if (headers[i]) {
+                const elementName = headers[i].replace(/\s+/g, '_');
+                const element = xmlDoc.createElement(elementName);
                 
-                if (!barcodeData.datamatrixSvg || !barcodeData.barcodeString) {
-                    console.warn(`Skipping barcode PDF for row ${i}: no valid barcode data`);
-                    continue;
+                let value = values[i] !== undefined ? values[i].toString().trim() : '';
+                
+                if (elementName === 'Title') {
+                    value = value.replace(/,/g, '');
                 }
                 
-                try {
-                    const svgData = new XMLSerializer().serializeToString(barcodeData.datamatrixSvg);
-                    const canvas = document.createElement('canvas');
-                    const ctx = canvas.getContext('2d');
-                    
-                    await new Promise((resolve, reject) => {
-                        const img = new Image();
-                        img.onload = function() {
-                            const widthScaleFactor = 1.10;
-                            const heightScaleFactor = 1.27;
-                            const barcodeWidth = 17 * widthScaleFactor;
-                            const barcodeHeight = 6 * heightScaleFactor;
-                            const margin = 10;
-                            
-                            const pageWidth = barcodeWidth + (margin * 2);
-                            const pageHeight = barcodeHeight + (margin * 2);
-                            
-                            const pdf = new jsPDF({
-                                orientation: 'portrait',
-                                unit: 'mm',
-                                format: [pageHeight, pageWidth]
-                            });
-                            
-                            canvas.width = img.width;
-                            canvas.height = img.height;
-                            ctx.drawImage(img, 0, 0);
-                            
-                            const xOffset = (pdf.internal.pageSize.getWidth() - barcodeWidth) / 2;
-                            const yOffset = margin;
-                            
-                            pdf.addImage(
-                                canvas.toDataURL('image/png'),
-                                'PNG',
-                                xOffset,
-                                yOffset,
-                                barcodeWidth,
-                                barcodeHeight
-                            );
-                            
-                            let filenameISBN = barcodeData.isbn;
-                            if (barcodeData.barcodeString && barcodeData.barcodeString.length >= 13) {
-                                filenameISBN = barcodeData.barcodeString.substring(0, 13);
-                            }
-                            filenameISBN = filenameISBN.replace(/\D/g, '');
-                            
-                            const filename = `${barcodeData.wiNumber}_${filenameISBN}_DBC.pdf`;
-                            
-                            const pdfArrayBuffer = pdf.output('arraybuffer');
-                            zip.file(filename, pdfArrayBuffer);
-                            
-                            resolve();
-                        };
-                        
-                        img.onerror = function() {
-                            console.error(`Error loading image for row ${i}`);
-                            reject(new Error(`Image load failed for row ${i}`));
-                        };
-                        
-                        img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
-                    });
-                    
-                } catch (error) {
-                    console.error(`Error processing barcode ${i}:`, error);
-                }
+                element.textContent = value;
+                root.appendChild(element);
+            }
+        }
+        
+        const serializer = new XMLSerializer();
+        let xmlString = serializer.serializeToString(xmlDoc);
+        
+        xmlString = xmlString.replace(/></g, '>\n<');
+        xmlString = xmlString.replace(/<csv>/, '<csv>\n');
+        xmlString = xmlString.replace(/<\/csv>/, '\n</csv>');
+        xmlString = xmlString.replace(/<([^/?][^>]*)>/g, '  <$1>');
+        
+        return xmlString;
+    }
+
+    function applyProductionRouteLogic() {
+        showProcessingIndicator('Applying production route logic...');
+        
+        const productionRouteIndex = originalHeaders.indexOf('Production_Route');
+        const trimWidthIndex = originalHeaders.indexOf('Trim_Width');
+        
+        if (productionRouteIndex === -1 || trimWidthIndex === -1) {
+            hideProcessingIndicator();
+            return 0;
+        }
+        
+        let adjustmentCount = 0;
+        adjustedRows.clear();
+        
+        for (let i = 0; i < rawData.length; i++) {
+            const row = rawData[i];
+            const productionRoute = row[productionRouteIndex];
+            const currentTrimWidth = row[trimWidthIndex];
+            
+            if (productionRoute && productionRoute.toString().trim() === 'Limp P/Bound 8pp Cover') {
+                let trimWidthValue = parseFloat(currentTrimWidth) || 0;
+                trimWidthValue += 10;
+                rawData[i][trimWidthIndex] = trimWidthValue.toString();
+                adjustedRows.add(i);
+                adjustmentCount++;
+            }
+        }
+        
+        hideProcessingIndicator();
+        
+        if (adjustmentCount > 0) {
+            showAdjustmentSummary(adjustmentCount);
+        } else {
+            hideAdjustmentSummary();
+        }
+        
+        return adjustmentCount;
+    }
+
+    function regenerateAllData() {
+        showProcessingIndicator('Regenerating XML and barcode data...');
+        
+        xmlDataArray = [];
+        barcodeDataArray = [];
+        
+        for (let i = 0; i < rawData.length; i++) {
+            const values = rawData[i];
+            if (values.length === 0) continue;
+            
+            const xml = createXmlFromRow(originalHeaders, values);
+            const barcodeString = generateBarcodeString(values);
+            const datamatrixSvg = barcodeString ? createDataMatrixSVG(barcodeString) : null;
+            
+            const wiNumberIndex = originalHeaders.indexOf('Wi_Number');
+            const limpIsbnIndex = originalHeaders.indexOf('Limp_ISBN');
+            const casedIsbnIndex = originalHeaders.indexOf('Cased_ISBN');
+            const titleIndex = originalHeaders.indexOf('Title');
+            const productionRouteIndex = originalHeaders.indexOf('Production_Route');
+            const trimWidthIndex = originalHeaders.indexOf('Trim_Width');
+            
+            const wiNumber = values[wiNumberIndex] || 'unknown';
+            const limpIsbn = values[limpIsbnIndex] || '';
+            const casedIsbn = values[casedIsbnIndex] || '';
+            const isbn = limpIsbn || casedIsbn || 'N/A';
+            
+            let title = values[titleIndex] || 'N/A';
+            if (title !== 'N/A') {
+                title = title.toString().replace(/,/g, '');
             }
             
-            // Generate and download the combined ZIP
-            const content = await zip.generateAsync({ type: "blob" });
-            const url = window.URL.createObjectURL(content);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = "xml_and_datamatrix_files.zip";
-            document.body.appendChild(a);
-            a.click();
-            window.URL.revokeObjectURL(url);
-            document.body.removeChild(a);
+            const productionRoute = values[productionRouteIndex] || 'N/A';
+            const trimWidth = values[trimWidthIndex] || 'N/A';
             
-        } catch (error) {
-            console.error('Error generating combined ZIP:', error);
-            alert('Error generating files: ' + error.message);
-        } finally {
-            hideProcessingIndicator();
+            xmlDataArray.push({
+                wiNumber: wiNumber,
+                isbn: isbn,
+                title: title,
+                productionRoute: productionRoute,
+                trimWidth: trimWidth,
+                xml: xml
+            });
+            
+            barcodeDataArray.push({
+                wiNumber: wiNumber,
+                isbn: isbn,
+                barcodeString: barcodeString,
+                datamatrixSvg: datamatrixSvg,
+                rowIndex: i
+            });
         }
+        
+        hideProcessingIndicator();
     }
 
     function downloadSingleXml(xml, wiNumber) {
@@ -348,6 +362,113 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    async function downloadAllFiles() {
+        console.log('Download function called');
+        showProcessingIndicator('Generating XML files and DataMatrix PDFs...');
+        
+        try {
+            const zip = new JSZip();
+            const { jsPDF } = window.jspdf;
+            
+            // Add all XML files to ZIP
+            xmlDataArray.forEach(data => {
+                zip.file(`${data.wiNumber}.xml`, data.xml);
+            });
+            
+            // Add all DataMatrix PDFs to ZIP
+            for (let i = 0; i < barcodeDataArray.length; i++) {
+                const barcodeData = barcodeDataArray[i];
+                
+                if (!barcodeData.datamatrixSvg || !barcodeData.barcodeString) {
+                    console.warn(`Skipping barcode PDF for row ${i}: no valid barcode data`);
+                    continue;
+                }
+                
+                try {
+                    const svgData = new XMLSerializer().serializeToString(barcodeData.datamatrixSvg);
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    
+                    await new Promise((resolve, reject) => {
+                        const img = new Image();
+                        img.onload = function() {
+                            const widthScaleFactor = 1.10;
+                            const heightScaleFactor = 1.27;
+                            const barcodeWidth = 17 * widthScaleFactor;
+                            const barcodeHeight = 6 * heightScaleFactor;
+                            const margin = 10;
+                            
+                            const pageWidth = barcodeWidth + (margin * 2);
+                            const pageHeight = barcodeHeight + (margin * 2);
+                            
+                            const pdf = new jsPDF({
+                                orientation: pageWidth > pageHeight ? 'landscape' : 'portrait',
+                                unit: 'mm',
+                                format: [Math.max(pageWidth, pageHeight), Math.min(pageWidth, pageHeight)]
+                            });
+                            
+                            canvas.width = img.width;
+                            canvas.height = img.height;
+                            ctx.drawImage(img, 0, 0);
+                            
+                            const xOffset = (pdf.internal.pageSize.getWidth() - barcodeWidth) / 2;
+                            const yOffset = margin;
+                            
+                            pdf.addImage(
+                                canvas.toDataURL('image/png'),
+                                'PNG',
+                                xOffset,
+                                yOffset,
+                                barcodeWidth,
+                                barcodeHeight
+                            );
+                            
+                            let filenameISBN = barcodeData.isbn;
+                            if (barcodeData.barcodeString && barcodeData.barcodeString.length >= 13) {
+                                filenameISBN = barcodeData.barcodeString.substring(0, 13);
+                            }
+                            filenameISBN = filenameISBN.replace(/\D/g, '');
+                            
+                            const filename = `${barcodeData.wiNumber}_${filenameISBN}_DBC.pdf`;
+                            
+                            const pdfArrayBuffer = pdf.output('arraybuffer');
+                            zip.file(filename, pdfArrayBuffer);
+                            
+                            resolve();
+                        };
+                        
+                        img.onerror = function() {
+                            console.error(`Error loading image for row ${i}`);
+                            reject(new Error(`Image load failed for row ${i}`));
+                        };
+                        
+                        img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
+                    });
+                    
+                } catch (error) {
+                    console.error(`Error processing barcode ${i}:`, error);
+                }
+            }
+            
+            // Generate and download the combined ZIP
+            const content = await zip.generateAsync({ type: "blob" });
+            const url = window.URL.createObjectURL(content);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = "xml_and_datamatrix_files.zip";
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+            
+        } catch (error) {
+            console.error('Error generating combined ZIP:', error);
+            alert('Error generating files: ' + error.message);
+        } finally {
+            hideProcessingIndicator();
+        }
+    }
+
     function deleteRow(index) {
         if (confirm('Are you sure you want to delete this row?')) {
             xmlDataArray.splice(index, 1);
@@ -365,10 +486,7 @@ document.addEventListener('DOMContentLoaded', function() {
             adjustedRows = newAdjustedRows;
             
             updatePreviewTable();
-            
-            if (editTableSection.style.display !== 'none') {
-                populateEditTable();
-            }
+            populateEditTable();
             
             if (downloadAllBtn) downloadAllBtn.disabled = xmlDataArray.length === 0;
             if (clearAllBtn) clearAllBtn.disabled = xmlDataArray.length === 0;
@@ -465,132 +583,109 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    function regenerateAllData() {
-        showProcessingIndicator('Regenerating XML and barcode data...');
+    function populateEditTable() {
+        if (!editTable) return;
         
-        xmlDataArray = [];
-        barcodeDataArray = [];
+        const thead = editTable.querySelector('thead tr');
+        const tbody = editTable.querySelector('tbody');
+        thead.innerHTML = '';
+        tbody.innerHTML = '';
         
-        for (let i = 0; i < rawData.length; i++) {
-            const values = rawData[i];
-            if (values.length === 0) continue;
+        const columnIndices = {};
+        editableColumns.forEach(column => {
+            const index = originalHeaders.indexOf(column);
+            if (index !== -1) {
+                columnIndices[column] = index;
+            }
+        });
+        
+        // Add headers for columns that exist in the data + DataMatrix column
+        editableColumns.forEach(column => {
+            if (columnIndices[column] !== undefined) {
+                const th = document.createElement('th');
+                th.textContent = column;
+                th.setAttribute('scope', 'col');
+                thead.appendChild(th);
+            }
+        });
+        
+        // Add DataMatrix column header
+        const dataMatrixHeader = document.createElement('th');
+        dataMatrixHeader.textContent = 'DataMatrix';
+        dataMatrixHeader.classList.add('barcode-column');
+        thead.appendChild(dataMatrixHeader);
+        
+        // Add rows with editable cells
+        rawData.forEach((rowData, rowIndex) => {
+            const row = document.createElement('tr');
+            row.dataset.rowIndex = rowIndex;
             
-            const xml = createXmlFromRow(originalHeaders, values);
-            const barcodeString = generateBarcodeString(values);
-            const datamatrixSvg = barcodeString ? createDataMatrixSVG(barcodeString) : null;
-            
-            const wiNumberIndex = originalHeaders.indexOf('Wi_Number');
-            const limpIsbnIndex = originalHeaders.indexOf('Limp_ISBN');
-            const casedIsbnIndex = originalHeaders.indexOf('Cased_ISBN');
-            const titleIndex = originalHeaders.indexOf('Title');
-            const productionRouteIndex = originalHeaders.indexOf('Production_Route');
-            const trimWidthIndex = originalHeaders.indexOf('Trim_Width');
-            
-            const wiNumber = values[wiNumberIndex] || 'unknown';
-            const limpIsbn = values[limpIsbnIndex] || '';
-            const casedIsbn = values[casedIsbnIndex] || '';
-            const isbn = limpIsbn || casedIsbn || 'N/A';
-            
-            let title = values[titleIndex] || 'N/A';
-            if (title !== 'N/A') {
-                title = title.toString().replace(/,/g, '');
+            if (adjustedRows.has(rowIndex)) {
+                row.classList.add('trim-width-adjusted');
             }
             
-            const productionRoute = values[productionRouteIndex] || 'N/A';
-            const trimWidth = values[trimWidthIndex] || 'N/A';
-            
-            xmlDataArray.push({
-                wiNumber: wiNumber,
-                isbn: isbn,
-                title: title,
-                productionRoute: productionRoute,
-                trimWidth: trimWidth,
-                xml: xml
-            });
-            
-            barcodeDataArray.push({
-                wiNumber: wiNumber,
-                isbn: isbn,
-                barcodeString: barcodeString,
-                datamatrixSvg: datamatrixSvg,
-                rowIndex: i
-            });
-        }
-        
-        hideProcessingIndicator();
-    }
-
-    function createXmlFromRow(headers, values) {
-        const xmlDoc = document.implementation.createDocument(null, "csv", null);
-        const root = xmlDoc.documentElement;
-        
-        const pi = xmlDoc.createProcessingInstruction('xml', 'version="1.0" encoding="UTF-8"');
-        xmlDoc.insertBefore(pi, root);
-        
-        for (let i = 0; i < headers.length; i++) {
-            if (headers[i]) {
-                const elementName = headers[i].replace(/\s+/g, '_');
-                const element = xmlDoc.createElement(elementName);
+            editableColumns.forEach(column => {
+                const colIndex = columnIndices[column];
                 
-                let value = values[i] !== undefined ? values[i].toString().trim() : '';
-                
-                if (elementName === 'Title') {
-                    value = value.replace(/,/g, '');
+                if (colIndex !== undefined) {
+                    const cell = document.createElement('td');
+                    const input = document.createElement('input');
+                    input.type = 'text';
+                    input.className = 'form-control';
+                    input.value = rowData[colIndex] !== undefined ? rowData[colIndex] : '';
+                    input.dataset.colIndex = colIndex;
+                    
+                    if (input.value.length > 20) {
+                        input.title = input.value;
+                    }
+                    
+                    cell.appendChild(input);
+                    row.appendChild(cell);
                 }
-                
-                element.textContent = value;
-                root.appendChild(element);
+            });
+            
+            // Add DataMatrix cell
+            const dataMatrixCell = document.createElement('td');
+            dataMatrixCell.className = 'datamatrix-cell';
+            
+            // Generate barcode for this row
+            const barcodeString = generateBarcodeString(rowData);
+            if (barcodeString) {
+                const datamatrixSvg = createDataMatrixSVG(barcodeString);
+                if (datamatrixSvg) {
+                    datamatrixSvg.classList.add('datamatrix-preview');
+                    dataMatrixCell.appendChild(datamatrixSvg);
+                } else {
+                    dataMatrixCell.textContent = 'Error';
+                    dataMatrixCell.style.color = '#dc3545';
+                }
+            } else {
+                dataMatrixCell.textContent = 'N/A';
+                dataMatrixCell.style.color = '#6c757d';
             }
+            
+            row.appendChild(dataMatrixCell);
+            tbody.appendChild(row);
+        });
+        
+        const rowCount = rawData.length;
+        const rowCountInfo = document.getElementById('rowCountInfo');
+        if (rowCountInfo) {
+            rowCountInfo.textContent = `${rowCount} record${rowCount !== 1 ? 's' : ''} found`;
         }
-        
-        const serializer = new XMLSerializer();
-        let xmlString = serializer.serializeToString(xmlDoc);
-        
-        xmlString = xmlString.replace(/></g, '>\n<');
-        xmlString = xmlString.replace(/<csv>/, '<csv>\n');
-        xmlString = xmlString.replace(/<\/csv>/, '\n</csv>');
-        xmlString = xmlString.replace(/<([^/?][^>]*)>/g, '  <$1>');
-        
-        return xmlString;
     }
 
-    function applyProductionRouteLogic() {
-        showProcessingIndicator('Applying production route logic...');
+    function updateDataFromEditTable() {
+        const tbody = editTable.querySelector('tbody');
+        const rows = tbody.querySelectorAll('tr');
         
-        const productionRouteIndex = originalHeaders.indexOf('Production_Route');
-        const trimWidthIndex = originalHeaders.indexOf('Trim_Width');
-        
-        if (productionRouteIndex === -1 || trimWidthIndex === -1) {
-            hideProcessingIndicator();
-            return 0;
-        }
-        
-        let adjustmentCount = 0;
-        adjustedRows.clear();
-        
-        for (let i = 0; i < rawData.length; i++) {
-            const row = rawData[i];
-            const productionRoute = row[productionRouteIndex];
-            const currentTrimWidth = row[trimWidthIndex];
-            
-            if (productionRoute && productionRoute.toString().trim() === 'Limp P/Bound 8pp Cover') {
-                let trimWidthValue = parseFloat(currentTrimWidth) || 0;
-                trimWidthValue += 10;
-                rawData[i][trimWidthIndex] = trimWidthValue.toString();
-                adjustedRows.add(i);
-                adjustmentCount++;
-            }
-        }
-        
-        hideProcessingIndicator();
-        
-        if (adjustmentCount > 0) {
-            showAdjustmentSummary(adjustmentCount);
-        } else {
-            hideAdjustmentSummary();
-        }
-        
-        return adjustmentCount;
+        rows.forEach((row, rowIndex) => {
+            const inputs = row.querySelectorAll('input');
+            inputs.forEach(input => {
+                const colIndex = parseInt(input.dataset.colIndex);
+                rawData[rowIndex][colIndex] = input.value;
+            });
+        });
     }
 
     function convertExcelToXml(file) {
@@ -627,6 +722,7 @@ document.addEventListener('DOMContentLoaded', function() {
             showProcessingIndicator('Updating interface...');
             
             updatePreviewTable();
+            populateEditTable();
             
             if (downloadAllBtn) downloadAllBtn.disabled = xmlDataArray.length === 0;
             if (clearAllBtn) clearAllBtn.disabled = xmlDataArray.length === 0;
@@ -644,6 +740,10 @@ document.addEventListener('DOMContentLoaded', function() {
         if (downloadAllBtn) downloadAllBtn.disabled = true;
         if (clearAllBtn) clearAllBtn.disabled = true;
         if (previewTable) previewTable.querySelector('tbody').innerHTML = '';
+        if (editTable) {
+            editTable.querySelector('thead tr').innerHTML = '';
+            editTable.querySelector('tbody').innerHTML = '';
+        }
         xmlDataArray = [];
         barcodeDataArray = [];
         originalHeaders = [];
@@ -677,11 +777,25 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    // Save changes from edit mode
+    if (saveChangesBtn) {
+        saveChangesBtn.addEventListener('click', function() {
+            updateDataFromEditTable();
+            regenerateAllData();
+            updatePreviewTable();
+            previewMode.checked = true;
+            previewTableSection.style.display = 'block';
+            editTableSection.style.display = 'none';
+        });
+    }
+
     // Event Listeners
     if (excelFile) {
         excelFile.addEventListener('change', function() {
             const file = this.files[0];
             if (file) {
+                // Clear existing data before processing new file
+                clearAll();
                 convertExcelToXml(file);
             } else {
                 clearAll();
