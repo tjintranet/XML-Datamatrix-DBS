@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Excel to XML Batch Converter with DataMatrix Generator</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-icons/1.11.1/font/bootstrap-icons.min.css" rel="stylesheet">
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+    
+    <style>
+        .edit-mode-table td input {
+            width: 100%;
+            border: 1px solid #dee2e6;
+            padding: 4px 8px;
+        }
+        .edit-mode-table {
+            white-space: nowrap;
+        }
+        .table-container {
+            max-height: 600px;
+            overflow-y: auto;
+            overflow-x: auto;
+            position: relative;
+        }
+        .edit-mode-table thead {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        .edit-mode-table thead th {
+            background-color: #f8f9fa;
+            border-bottom: 2px solid #dee2e6;
+            box-shadow: 0 2px 2px -1px rgba(0,0,0,0.1);
+        }
+        .edit-mode-table th:nth-child(1), .edit-mode-table td:nth-child(1) { min-width: 100px; }
+        .edit-mode-table th:nth-child(2), .edit-mode-table td:nth-child(2), 
+        .edit-mode-table th:nth-child(3), .edit-mode-table td:nth-child(3) { min-width: 130px; }
+        .edit-mode-table th:nth-child(4), .edit-mode-table td:nth-child(4) { min-width: 300px; }
+        .edit-mode-table th:nth-child(n+5), .edit-mode-table td:nth-child(n+5) { min-width: 110px; }
+        .edit-mode-table tbody tr:nth-of-type(odd) {
+            background-color: rgba(0,0,0,.02);
+        }
+        .edit-mode-table tbody tr:hover {
+            background-color: rgba(0,123,255,.05);
+        }
+        .trim-width-adjusted {
+            background-color: rgba(255,193,7,.1) !important;
+        }
+        .trim-width-adjusted input {
+            background-color: rgba(255,193,7,.2);
+        }
+        .processing-indicator {
+            display: none;
+            margin-top: 10px;
+        }
+        .datamatrix-preview {
+            max-width: 60px;
+            max-height: 40px;
+            margin: 0 auto;
+            display: block;
+        }
+        .datamatrix-cell {
+            text-align: center;
+            padding: 4px 2px;
+            vertical-align: middle;
+            width: 80px;
+        }
+        .datamatrix-preview:hover {
+            transform: scale(2);
+            z-index: 1000;
+            position: relative;
+            background: white;
+            border: 2px solid #007bff;
+            border-radius: 4px;
+        }
+        .barcode-column {
+            min-width: 150px;
+        }
+    </style>
+</head>
+<body class="bg-light">
+    <div class="container py-5">
+        <div class="row justify-content-center">
+            <div class="col-md-12">
+                <div class="card shadow">
+                    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                        <h3 class="card-title mb-0">Excel to XML Batch Converter with DataMatrix Generator</h3>
+                        <a href="http://192.168.10.251/epace/company:c001/inquiry/UserDefinedInquiry/view/5420" 
+                                class="btn btn-warning ms-2" 
+                                target="_blank">
+                                <i class="bi bi-caret-right-square me-1"></i> PACE Inquiry
+                        </a>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <!-- Left Column - File Upload and Controls -->
+                            <div class="col-md-6">
+                                <div class="mb-4">
+                                    <label for="excelFile" class="form-label">Choose Excel File</label>
+                                    <input type="file" class="form-control" id="excelFile" accept=".xlsx,.xls">
+                                </div>
+                                
+                                <!-- Mode Toggle Buttons -->
+                                <div class="mb-3 btn-group w-100" role="group" id="viewModeToggle">
+                                    <input type="radio" class="btn-check" name="viewMode" id="previewMode" autocomplete="off" checked>
+                                    <label class="btn btn-outline-primary" for="previewMode">Preview Mode</label>
+                                    
+                                    <input type="radio" class="btn-check" name="viewMode" id="editMode" autocomplete="off">
+                                    <label class="btn btn-outline-primary" for="editMode">Edit Mode <i class="bi bi-pencil-square"></i></label>
+                                </div>
+                                
+                                <div class="d-grid gap-2">
+                                    <button class="btn btn-success" id="downloadAllBtn" disabled>Download All Files (XML + DataMatrix PDFs)</button>
+                                    <button class="btn btn-secondary" id="clearAllBtn" disabled>Clear All</button>
+                                </div>
+                            </div>
+                            
+                            <!-- Right Column - Messages and Status -->
+                            <div class="col-md-6">
+                                <!-- Processing Status -->
+                                <div class="alert alert-info processing-indicator" id="processingIndicator">
+                                    <i class="bi bi-gear-fill me-2"></i>
+                                    <span id="processingText">Processing file...</span>
+                                </div>
+                                
+                                <!-- Adjustment Summary -->
+                                <div class="alert alert-warning d-none" id="adjustmentSummary">
+                                    <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                                    <span id="adjustmentText"></span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Full Width Preview Tables Section -->
+                        <div class="row mt-4">
+                            <div class="col-12">
+                                <!-- Preview Table Section -->
+                                <div id="previewTableSection">
+                                    <label class="form-label">Preview:</label>
+                                    <div class="table-responsive">
+                                        <table class="table table-bordered table-hover table-sm" id="previewTable">
+                                            <thead>
+                                                <tr>
+                                                    <th>Delete</th>
+                                                    <th>Wi Number</th>
+                                                    <th>ISBN</th>
+                                                    <th>Title</th>
+                                                    <th>Production Route</th>
+                                                    <th>Trim Width</th>
+                                                    <th>DataMatrix</th>
+                                                    <th>Action</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody></tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                                
+                                <!-- Edit Table Section -->
+                                <div id="editTableSection" style="display: none;">
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <div>
+                                            <label class="form-label mb-0">Edit Data (Showing Key Fields + DataMatrix):</label>
+                                            <span class="ms-2 badge bg-secondary" id="rowCountInfo">0 records found</span>
+                                        </div>
+                                        <button class="btn btn-primary" id="saveChangesBtn"><i class="bi bi-save"></i> Save Changes</button>
+                                    </div>
+                                    <div class="alert alert-info d-flex align-items-center" role="alert">
+                                        <i class="bi bi-info-circle-fill me-2"></i>
+                                        <div>
+                                            Scroll through records while keeping column headers visible. DataMatrix codes are generated automatically. Click Save Changes when done.
+                                            <br><small class="text-muted">Rows with adjusted Trim Width are highlighted in yellow.</small>
+                                        </div>
+                                    </div>
+                                    <div class="table-responsive table-container">
+                                        <table class="table table-bordered table-hover edit-mode-table table-sm" id="editTable">
+                                            <thead>
+                                                <tr>
+                                                    <!-- Headers will be populated dynamically -->
+                                                </tr>
+                                            </thead>
+                                            <tbody></tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- External Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="datamatrix.js"></script>
+    
+    <!-- Main Application Script -->
+    <script src="script.js"></script>
+</body>
+</html>
