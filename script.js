@@ -455,7 +455,20 @@ document.addEventListener('DOMContentLoaded', function() {
             const url = window.URL.createObjectURL(content);
             const a = document.createElement('a');
             a.href = url;
-            a.download = "xml_and_datamatrix_files.zip";
+            
+            // Create filename based on number of records
+            let zipFilename = "xml_and_datamatrix_files.zip";
+            if (xmlDataArray.length > 1) {
+                // Multiple records: use "multi" prefix
+                zipFilename = "multi_xml_and_datamatrix_files.zip";
+            } else if (xmlDataArray.length === 1) {
+                // Single record: use Wi Number prefix
+                if (xmlDataArray[0].wiNumber && xmlDataArray[0].wiNumber !== 'unknown') {
+                    zipFilename = `${xmlDataArray[0].wiNumber}_xml_and_datamatrix_files.zip`;
+                }
+            }
+            
+            a.download = zipFilename;
             document.body.appendChild(a);
             a.click();
             window.URL.revokeObjectURL(url);
@@ -736,7 +749,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function clearAll() {
-        if (excelFile) excelFile.value = '';
+        // Don't clear the file input value - let it show the current file
         if (downloadAllBtn) downloadAllBtn.disabled = true;
         if (clearAllBtn) clearAllBtn.disabled = true;
         if (previewTable) previewTable.querySelector('tbody').innerHTML = '';
@@ -756,6 +769,12 @@ document.addEventListener('DOMContentLoaded', function() {
         if (previewMode) previewMode.checked = true;
         if (previewTableSection) previewTableSection.style.display = 'block';
         if (editTableSection) editTableSection.style.display = 'none';
+    }
+
+    function clearAllComplete() {
+        // This function clears everything including the file input
+        if (excelFile) excelFile.value = '';
+        clearAll();
     }
 
     // Mode Toggle Buttons
@@ -794,17 +813,17 @@ document.addEventListener('DOMContentLoaded', function() {
         excelFile.addEventListener('change', function() {
             const file = this.files[0];
             if (file) {
-                // Clear existing data before processing new file
+                // Clear existing data (but don't clear file input)
                 clearAll();
                 convertExcelToXml(file);
             } else {
-                clearAll();
+                clearAllComplete();
             }
         });
     }
 
     if (clearAllBtn) {
-        clearAllBtn.addEventListener('click', clearAll);
+        clearAllBtn.addEventListener('click', clearAllComplete);
     }
     
     if (downloadAllBtn) {
