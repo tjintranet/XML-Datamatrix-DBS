@@ -346,7 +346,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
                 filenameISBN = filenameISBN.replace(/\D/g, '');
                 
-                const filename = `${barcodeData.wiNumber}_${filenameISBN}_DBC.pdf`;
+                const filename = `${barcodeData.wiNumber}-${filenameISBN}_DBC.pdf`;
                 pdf.save(filename);
             };
             
@@ -429,7 +429,7 @@ document.addEventListener('DOMContentLoaded', function() {
                             }
                             filenameISBN = filenameISBN.replace(/\D/g, '');
                             
-                            const filename = `${barcodeData.wiNumber}_${filenameISBN}_DBC.pdf`;
+                            const filename = `${barcodeData.wiNumber}-${filenameISBN}_DBC.pdf`;
                             
                             const pdfArrayBuffer = pdf.output('arraybuffer');
                             zip.file(filename, pdfArrayBuffer);
